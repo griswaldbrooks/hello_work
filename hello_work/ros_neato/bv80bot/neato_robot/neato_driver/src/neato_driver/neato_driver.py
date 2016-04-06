@@ -376,12 +376,16 @@ class Botvac():
 
         return True
 
+    # thread to read data from the serial port
+    # buffers each line in a list (self.comsData)
+    # when an end of response (^Z) is read, adds the complete list of response lines to self.responseData and resets the comsData list for the next command response.
     def read(self):
         self.reading = True
         line=""
+
         while(self.reading and not rospy.is_shutdown()):
             try:
-               val = self.port.read(1)
+               val = self.port.read(1) # read from serial 1 char at a time so we can parse each character
             except Exception as ex:
                 rospy.logerr("Exception Reading Neato Serial: " + str(ex))
                 val=[]
@@ -395,53 +399,64 @@ class Botvac():
                     print ("'%s'"%str(val))
                 '''
 
-                if ord(val[0]) ==13:
+                if ord(val[0]) ==13: # ignore the CRs
                     pass
 
-                elif ord(val[0]) == 26: # ^Z
+                elif ord(val[0]) == 26: # ^Z (end of response)
                     if len(line) > 0:
-                        self.comsData.append(line)
+                        self.comsData.append(line) # add last line to response set if it is not empty
                         #print("Got Last Line: %s" % line)
-                        line=""
+                        line="" # clear the line buffer for the next line
 
                     #print ("Got Last")
-                    with self.readLock:
+                    with self.readLock: # got the end of the command response so add the full set of response data as a new item in self.responseData
                         self.responseData.append(list(self.comsData))
 
-                    self.comsData = []
+                    self.comsData = [] # clear the bucket for the lines of the next command response
 
-                elif ord(val[0]) == 10: # NL
+                elif ord(val[0]) == 10: # NL, terminate the current line and add it to the response data list (comsData) (if it is not a blank line)
                     if len(line) > 0:
                         self.comsData.append(line)
                         #print("Got Line: %s" % line)
-                        line = ""
+                        line = "" # clear the bufer for the next line
                 else:
-                    line=line+val
+                    line=line+val # add the character to the current line buffer
 
+    # read response data for a command
+    # returns tuple (line,last)
+    # line is one complete line of text from the command response
+    # last = true if the line was the last line of the response data (indicated by a ^Z from the neato)
+    # returns the next line of data from the buffer.
+    # if the line was the last line last = true
+    # if no data is avaialable and we timeout returns line=""
     def getResponse(self,timeout=1):
+
+        # if we don't have any data in currentResponse, wait for more data to come in (or timeout) 
         while (len(self.currentResponse)==0) and (not rospy.is_shutdown()) and timeout > 0:
-            with self.readLock:
+
+            with self.readLock: # pop a new response data list out of self.responseData (should contain all data lines returned for the last sent command)
                if len(self.responseData) > 0:
                   self.currentResponse = self.responseData.pop(0)
                   #print "New Response Set"
                else:
-                  self.currentResponse=[]
+                  self.currentResponse=[] # no data to get
 
-            if len(self.currentResponse)==0:
+            if len(self.currentResponse)==0: # nothing in the buffer so wait (or until timeout)
                time.sleep(0.010)
                timeout=timeout-0.010
 
-
+        # default to nothing to return
         line = ""
         last=False
 
+        # if currentResponse has data pop the next line 
         if not len(self.currentResponse)==0:
             line = self.currentResponse.pop(0)
             #print line,len(self.currentResponse)
             if  len(self.currentResponse)==0:
-                last=True
+                last=True  # if this was the last line in the response set the last flag
         else:
-            print "Time Out"
+            print "Time Out" # no data so must have timedout
 
         #rospy.loginfo("Got Response: %s, Last: %d" %(line,last))
         return (line,last)
@@ -462,4 +477,172 @@ class Botvac():
 #ButtonAmberDim - Start Button Amber Dim (mutually exclusive of other Button options)
 #ButtonGreenDim - Start Button Green Dim (mutually exclusive of other Button options)
 #ButtonOff - Start Button Off
+import telnetlib
+import os
+class Huey():
+
+    def __init__(self, telnet_ip="192.168.1.107"):
+        self.telnet_c = telnetlib.Telnet(telnet_ip)
+        printf("printf: telnet to server now...")
+        rospy.logerr("rospy.logerr: telnet to server now...")
+
+        self.telnet_c.read_until("login:")
+        self.telnet_c.write("root\n")
+        self.telnet_c.read_until("Password:")
+        self.telnet_c.write("\n")
+        self.telnet_c.read_until("#");
+
+        # Storage for motor and sensor information
+        self.state = {"LeftWheel_PositionInMM": 0, "RightWheel_PositionInMM": 0}
+        self.stop_state = True
+        # turn things on
+        self.setTestMode("on")
+        self.setLDS("on")
+
+    def exit(self):
+        self.setLDS("off")
+        self.setTestMode("off")
+
+    def setTestMode(self, value):
+        """ Turn test mode on/off. """
+        self.telnet_c.write("testmode " + value + "\n")
+
+    def setLDS(self, value):
+        self.telnet_c.write("setldsrotation " + value + "\n")
+
+    def requestScan(self):
+        """ Ask neato for an array of scan reads. """
+        #self.telnet_c.flushInput()
+        self.telnet_c.write("getldsscan\n")
+
+    def getScanRanges(self):
+        """ Read values of a scan -- call requestScan first! """
+        ranges = list()
+        angle = 0
+        try:
+            line = self.telnet_c.read_until(b"/r/n#>")
+        except:
+            print("getScanRanges: read_until failed")
+            return []
+        while line.split(",")[0] != "AngleInDegrees":
+            try:
+                line = self.telnet_c.read_until(b"/r/n#>")
+            except:
+                return []
+        while angle < 360:
+            try:
+                vals = self.telnet_c.read_until(b"/r/n#>")
+            except:
+                pass
+            vals = vals.split(",")
+            #print angle, vals
+            try:
+                a = int(vals[0])
+                r = int(vals[1])
+                ranges.append(r/1000.0)
+            except:
+                ranges.append(0)
+            angle += 1
+        return ranges
+
+    def setMotors(self, l, r, s):
+        """ Set motors, distance left & right + speed """
+        #This is a work-around for a bug in the Neato API. The bug is that the
+        #robot won't stop instantly if a 0-velocity command is sent - the robot
+        #could continue moving for up to a second. To work around this bug, the
+        #first time a 0-velocity is sent in, a velocity of 1,1,1 is sent. Then, 
+        #the zero is sent. This effectively causes the robot to stop instantly.
+        if (int(l) == 0 and int(r) == 0 and int(s) == 0):
+            if (not self.stop_state):
+                self.stop_state = True
+                l = 1
+                r = 1
+                s = 1
+        else:
+            self.stop_state = False
+
+        self.telnet_c.write("setmotor "+str(int(l))+" "+str(int(r))+" "+str(int(s))+"\n")
+
+    def getMotors(self):
+        """ Update values for motors in the self.state dictionary.
+            Returns current left, right encoder values. """
+        #self.port.flushInput()
+        self.telnet_c.write("getmotors\n")
+        line = self.telnet_c.read_until(b"/r/n#>")
+        while line.split(",")[0] != "Parameter":
+            try:
+                line = self.telnet_c.read_until(b"/r/n#>")
+            except:
+                return [0,0]
+        for i in range(len(xv11_motor_info)):
+            try:
+                values = self.telnet_c.read_until(b"/r/n#>").split(",")
+                self.state[values[0]] = int(values[1])
+            except:
+                pass
+        return [self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]]
+
+    def getAnalogSensors(self):
+        """ Update values for analog sensors in the self.state dictionary. """
+        self.telnet_c.write("getanalogsensors\n")
+        line = self.telnet_c.read_until(b"/r/n#>")
+        while line.split(",")[0] != "SensorName":
+            try:
+                line = self.telnet_c.read_until(b"/r/n#>")
+            except:
+                return
+        for i in range(len(xv11_analog_sensors)):
+            try:
+                values = self.telnet_c.read_until(b"/r/n#>").split(",")
+                self.state[values[0]] = int(values[1])
+            except:
+                pass
+
+    def getDigitalSensors(self):
+        """ Update values for digital sensors in the self.state dictionary. """
+        self.telnet_c.write("getdigitalsensors\n")
+        line = self.telnet_c.read_until(b"/r/n#>")
+        while line.split(",")[0] != "Digital Sensor Name":
+            try:
+                line = self.telnet_c.read_until(b"/r/n#>")
+            except:
+                return
+        for i in range(len(xv11_digital_sensors)):
+            try:
+                values = self.telnet_c.read_until(b"/r/n#>").split(",")
+                self.state[values[0]] = int(values[1])
+            except:
+                pass
+
+    def getCharger(self):
+        """ Update values for charger/battery related info in self.state dictionary. """
+        self.telnet_c.write("getcharger\n")
+        line = self.telnet_c.read_until(b"/r/n#>")
+        while line.split(",")[0] != "Label":
+            line = self.telnet_c.read_until(b"/r/n#>")
+        for i in range(len(xv11_charger_info)):
+            values = self.telnet_c.read_until(b"/r/n#>").split(",")
+            try:
+                self.state[values[0]] = int(values[1])
+            except:
+                pass
+
+    def setBacklight(self, value):
+        if value > 0:
+            self.telnet_c.write("setled backlighton")
+        else:
+            self.telnet_c.write("setled backlightoff")
+
+    #SetLED - Sets the specified LED to on,off,blink, or dim. (TestMode Only)
+    #BacklightOn - LCD Backlight On  (mutually exclusive of BacklightOff)
+    #BacklightOff - LCD Backlight Off (mutually exclusive of BacklightOn)
+    #ButtonAmber - Start Button Amber (mutually exclusive of other Button options)
+    #ButtonGreen - Start Button Green (mutually exclusive of other Button options)
+    #LEDRed - Start Red LED (mutually exclusive of other Button options)
+    #LEDGreen - Start Green LED (mutually exclusive of other Button options)
+    #ButtonAmberDim - Start Button Amber Dim (mutually exclusive of other Button options)
+    #ButtonGreenDim - Start Button Green Dim (mutually exclusive of other Button options)
+    #ButtonOff - Start Button Off
+
+
 

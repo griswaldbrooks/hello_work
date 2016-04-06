@@ -42,7 +42,8 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from tf.broadcaster import TransformBroadcaster
 
-from neato_driver.neato_driver import Botvac
+#from neato_driver.neato_driver import Botvac
+from neato_driver.neato_driver import Huey
 
 class NeatoNode:
 	
@@ -52,10 +53,13 @@ class NeatoNode:
 
         self.CMD_RATE =2 
 
-        self.port = rospy.get_param('~port', "/dev/ttyUSB0")
-        rospy.loginfo("Using port: %s" % self.port)
+        #self.port = rospy.get_param('~port', "/dev/ttyUSB0")
+        self.telnet_ip = rospy.get_param('~telnet_ip', "192.168.1.107")
+        #rospy.loginfo("Using port: %s" % self.port)
+        rospy.loginfo("Using telnet: %s" % self.telnet_ip)
 
-        self.robot = Botvac(self.port)
+        #self.robot = Botvac(self.port)
+        self.robot = Huey(self.telnet_ip)
 
         rospy.Subscriber("cmd_vel", Twist, self.cmdVelCb)
         self.scanPub = rospy.Publisher('base_scan', LaserScan, queue_size=10)
@@ -105,7 +109,9 @@ class NeatoNode:
             if cmd_rate ==0:
 		    # send updated movement commands
 		    #if self.cmd_vel != self.old_vel or self.cmd_vel == [0,0]:
-		    self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]), abs(self.cmd_vel[1])))
+                    # max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
+		    #self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], (abs(self.cmd_vel[0])+abs(self.cmd_vel[1]))/2)
+		    self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
 		    cmd_rate = self.CMD_RATE
 
             self.old_vel = self.cmd_vel
@@ -196,8 +202,10 @@ class NeatoNode:
         th = req.angular.z * (self.robot.base_width/2)
         k = max(abs(x-th),abs(x+th))
         # sending commands higher than max speed will fail
+
         if k > self.robot.max_speed:
             x = x*self.robot.max_speed/k; th = th*self.robot.max_speed/k
+
         self.cmd_vel = [int(x-th), int(x+th)]
 
 if __name__ == "__main__":    
