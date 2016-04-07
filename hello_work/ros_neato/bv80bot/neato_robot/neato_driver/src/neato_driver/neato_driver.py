@@ -352,7 +352,7 @@ class Botvac():
     
     def setLED(self,cmd):
 	self.setLed(cmd)
-
+	
     def sendCmd(self,cmd):
         #rospy.loginfo("Sent command: %s"%cmd)
         self.port.write("%s\n" % cmd)
@@ -477,31 +477,66 @@ class Botvac():
 #ButtonAmberDim - Start Button Amber Dim (mutually exclusive of other Button options)
 #ButtonGreenDim - Start Button Green Dim (mutually exclusive of other Button options)
 #ButtonOff - Start Button Off
+
+
+#########################################################################
+
 import telnetlib
 import os
 class Huey():
 
     def __init__(self, telnet_ip="192.168.1.107"):
         self.telnet_c = telnetlib.Telnet(telnet_ip)
-        printf("printf: telnet to server now...")
-        rospy.logerr("rospy.logerr: telnet to server now...")
+        print(">>> telnet to server at %s now..."%(telnet_ip))
+        rospy.loginfo("Huey: telnet to server %s now..." %(telnet_ip))
 
         self.telnet_c.read_until("login:")
         self.telnet_c.write("root\n")
         self.telnet_c.read_until("Password:")
         self.telnet_c.write("\n")
         self.telnet_c.read_until("#");
+        rospy.loginfo("Huey: connected to telnet server")
 
         # Storage for motor and sensor information
-        self.state = {"LeftWheel_PositionInMM": 0, "RightWheel_PositionInMM": 0}
+        self.state = {"LeftWheel_PositionInMM": 0, "RightWheel_PositionInMM": 0, 
+                    "LSIDEBIT": 0, "RSIDEBIT": 0, "LFRONTBIT": 0, "RFRONTBIT": 0}
         self.stop_state = True
         # turn things on
+        self.comsData = []
+        self.responseData = []
+        self.currentResponse=[]
+
+        self.reading = False
+
+        self.readLock = threading.RLock()
+        #self.readThread = threading.Thread(None, self.read)
+        #self.readThread.start()
+
+        self.telnet_c.write("\n\n\n")
+
         self.setTestMode("on")
         self.setLDS("on")
 
+        time.sleep(0.5)
+        self.setLed("ledgreen")
+
+        self.base_width = BASE_WIDTH
+        self.max_speed = MAX_SPEED
+
+        rospy.loginfo("neato_driver Huey class init done!")
+
     def exit(self):
         self.setLDS("off")
+        self.setLed("buttonoff")
+
+        time.sleep(1)
+
         self.setTestMode("off")
+
+        self.reading=False
+        self.readThread.join()
+
+        # close telnet?
 
     def setTestMode(self, value):
         """ Turn test mode on/off. """
@@ -614,6 +649,9 @@ class Huey():
             except:
                 pass
 
+    def getButtons():
+        return [0,0,0,0,0]
+
     def getCharger(self):
         """ Update values for charger/battery related info in self.state dictionary. """
         self.telnet_c.write("getcharger\n")
@@ -629,9 +667,15 @@ class Huey():
 
     def setBacklight(self, value):
         if value > 0:
-            self.telnet_c.write("setled backlighton")
+            self.telnet_c.write("setled backlighton\n")
         else:
-            self.telnet_c.write("setled backlightoff")
+            self.telnet_c.write("setled backlightoff\n")
+
+    def setLed(self, cmd):
+        self.telnet_c.write("setled %s\n" % cmd)
+
+    def setLED(self, cmd):
+        self.setLed(cmd)
 
     #SetLED - Sets the specified LED to on,off,blink, or dim. (TestMode Only)
     #BacklightOn - LCD Backlight On  (mutually exclusive of BacklightOff)
