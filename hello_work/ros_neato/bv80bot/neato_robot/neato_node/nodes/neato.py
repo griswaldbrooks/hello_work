@@ -42,8 +42,8 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from tf.broadcaster import TransformBroadcaster
 
-#from neato_driver.neato_driver import Botvac
-from neato_driver.neato_driver import Huey
+from neato_driver.neato_driver import Botvac
+#from neato_driver.neato_driver import Huey
 
 class NeatoNode:
 	
@@ -59,7 +59,8 @@ class NeatoNode:
         rospy.loginfo("Using telnet: %s" % self.telnet_ip)
 
         #self.robot = Botvac(self.port)
-        self.robot = Huey(self.telnet_ip)
+        #self.robot = Huey(self.telnet_ip)
+        self.robot = Botvac(self.telnet_ip)
 
         rospy.Subscriber("cmd_vel", Twist, self.cmdVelCb)
         self.scanPub = rospy.Publisher('base_scan', LaserScan, queue_size=10)
@@ -78,6 +79,8 @@ class NeatoNode:
         self.th = 0
         then = rospy.Time.now()
 
+        #rospy.loginfo("spin: before LaserScan")
+
         # things that don't ever change
         scan_link = rospy.get_param('~frame_id', 'base_laser_link')
         scan = LaserScan(header=rospy.Header(frame_id=scan_link))
@@ -88,15 +91,19 @@ class NeatoNode:
         scan.range_min = 0.020
         scan.range_max = 5.0
 
+        #rospy.loginfo("spin: before Odometry")
         odom = Odometry(header=rospy.Header(frame_id="odom"), child_frame_id='base_footprint')
 
         button = Button()
         sensor = Sensor()
-        self.robot.setBacklight(1)
-        self.robot.setLED("Green")
+        #self.robot.setBacklight(1)
+        #self.robot.setLED("Green")
+
         # main loop of driver
         r = rospy.Rate(20)
         cmd_rate= self.CMD_RATE
+
+        rospy.loginfo(">>>spin: before while loop")
 
         while not rospy.is_shutdown():
             # notify if low batt
@@ -104,6 +111,7 @@ class NeatoNode:
             #    print "battery low " + str(self.robot.getCharger()) + "%"
             # get motor encoder values
             left, right = self.robot.getMotors()
+            #rospy.loginfo("spin: loop: getMotors")
 
             cmd_rate = cmd_rate-1
             if cmd_rate ==0:
@@ -112,7 +120,8 @@ class NeatoNode:
                     # max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
 		    #self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], (abs(self.cmd_vel[0])+abs(self.cmd_vel[1]))/2)
 		    self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
-		    cmd_rate = self.CMD_RATE
+            #rospy.loginfo("spin: loop: setMotors")
+            cmd_rate = self.CMD_RATE
 
             self.old_vel = self.cmd_vel
 
@@ -120,7 +129,10 @@ class NeatoNode:
             scan.header.stamp = rospy.Time.now()
            
             self.robot.requestScan()
-            scan.ranges = self.robot.getScanRanges()
+            #rospy.loginfo("spin: loop: requestScan")
+            #scan.ranges = self.robot.getScanRanges()
+            scan.ranges = self.robot.getLdsScan()
+            #rospy.loginfo("spin: loop: getLdsScan")
 
             # now update position information
             dt = (scan.header.stamp - then).to_sec()
@@ -159,6 +171,7 @@ class NeatoNode:
 
             # sensors
             lsb, rsb, lfb, rfb = self.robot.getDigitalSensors()
+            #rospy.loginfo("spin: loop: getDigitalSensors")
 
             # buttons
             btn_soft, btn_scr_up, btn_start, btn_back, btn_scr_down = self.robot.getButtons()
@@ -167,6 +180,7 @@ class NeatoNode:
             # publish everything
             self.odomBroadcaster.sendTransform((self.x, self.y, 0), (quaternion.x, quaternion.y, quaternion.z,
                                                                      quaternion.w), then, "base_footprint", "odom")
+            #rospy.loginfo("spin: loop: sendTransform")
             self.scanPub.publish(scan)
             self.odomPub.publish(odom)
             button_enum = ("Soft_Button", "Up_Button", "Start_Button", "Back_Button", "Down_Button")
@@ -183,6 +197,7 @@ class NeatoNode:
                     sensor.name = sensor_enum[idx]
                     self.sensorPub.publish(sensor)
             # wait, then do it again
+            #rospy.loginfo("spin: loop: before sleep()")
             r.sleep()
 
         # shut down

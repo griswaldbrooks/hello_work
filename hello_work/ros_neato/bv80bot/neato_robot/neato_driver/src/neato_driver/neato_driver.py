@@ -36,6 +36,7 @@ import serial
 import rospy
 import time
 import threading
+import telnetlib
 
 BASE_WIDTH = 248    # millimeters
 MAX_SPEED = 300     # millimeters/second
@@ -116,54 +117,51 @@ xv11_charger_info = [ "FuelPercent",
                 "MaxPWM" ]
 
 
-#class xv11():
 class Botvac():
-    def __init__(self, port="/dev/ttyUSB0"):
-
-        self.port = serial.Serial(port,115200,timeout=0.1)
-
-        if not self.port.isOpen():
-            rospy.logerror("Failed To Open Serial Port")
-            return
-
-        rospy.loginfo("Open Serial Port %s ok" % port)
-
+    def __init__(self, telnet_ip="192.168.1.108", telnet_port="8711"):
+        self.telnet_c = telnetlib.Telnet(telnet_ip, telnet_port)
+        print(">>> telnet to server at %s:%s now..."%(telnet_ip, telnet_port))
+        rospy.loginfo("Huey: telneted to server %s:%s now..." %(telnet_ip, telnet_port))
 
 
         # Storage for motor and sensor information
         self.state = {"LeftWheel_PositionInMM": 0, "RightWheel_PositionInMM": 0,"LSIDEBIT":0,"RSIDEBIT":0,"LFRONTBIT":0,"RFRONTBIT":0}
-
         self.stop_state = True
         # turn things on
-
-
         self.comsData = []
         self.responseData= []
         self.currentResponse=[]
 
-        self.reading = False
-
-        self.readLock = threading.RLock()
-        self.readThread = threading.Thread(None,self.read)
-        self.readThread.start()
-
-        self.port.flushInput()
+        #self.port.flushInput()
         self.sendCmd("\n\n\n")
-        self.port.flushInput()
+        #self.port.flushInput()
 
+        #let's printout "getver" from Robot
+        self.sendCmd("getversion")
+        ver=self.telnet_c.read_until("@#", 5)
+        print ("Robot version is %s" % ver)
 
         self.setTestMode("on")
+        ver=self.telnet_c.read_until("@#", 5)
         self.setLDS("on")
+        ver=self.telnet_c.read_until("@#", 5)
 
         time.sleep(0.5)
-        self.setLed("ledgreen")
+        self.setLed("Led1Blink")
+        ver=self.telnet_c.read_until("@#", 5)
 
         self.base_width = BASE_WIDTH
         self.max_speed = MAX_SPEED
 
-        self.flush()
-
-	rospy.loginfo("Init Done")
+        # start a reading thread???
+        '''
+        self.reading = False
+        self.readLock = threading.RLock()
+        self.readThread = threading.Thread(None,self.read)
+        self.readThread.start()
+        '''
+        #self.flush()
+        rospy.loginfo("Init Done")
 
 
     def exit(self):
@@ -173,13 +171,14 @@ class Botvac():
         time.sleep(1)
 
         self.setTestMode("off")
-        self.port.flush()
+        self.flush()
 
+        '''
         self.reading=False
         self.readThread.join()
 
-        self.port.close()
-
+        self.telnet_c.close()
+        '''
 
     def setTestMode(self, value):
         """ Turn test mode on/off. """
@@ -192,28 +191,34 @@ class Botvac():
         """ Ask neato for an array of scan reads. """
         self.sendCmd("getldsscan")
 
-    def getScanRanges(self):
+    #def getScanRanges(self):
+    def getLdsScan(self):
 
         """ Read values of a scan -- call requestScan first! """
         ranges = list()
         angle = 0
 
+        mVals = self.telnet_c.read_until("@#")
+
+        '''
         if not self.readTo("AngleInDegrees"):
             self.flush()
             return []
+        '''
 
-        last=False
-        while not last: #angle < 360:
-            try:
-                vals,last = self.getResponse()
-            except Exception as ex:
-                rospy.logerr("Exception Reading Neato lidar: " + str(ex))
-                last=True
-                vals=[]
+        vals = mVals.splitlines()
+        #print vals
+        #print "before LDS while loop here"
+        for l in vals: #angle < 360:
+            if len(l) < 2:
+                continue
 
-            vals = vals.split(",")
+            if "," not in l:
+                continue
 
-            if ((not last) and ord(vals[0][0])>=48 and ord(vals[0][0])<=57 ):
+            vals = l.split(",")
+
+            if (ord(vals[0][0])>=48 and ord(vals[0][0])<=57 ):
                 #print angle, vals
                 try:
                     a = int(vals[0])
@@ -233,7 +238,7 @@ class Botvac():
                 angle += 1
 
         if len(ranges) <> 360:
-	    rospy.loginfo( "Missing laser scans: got %d points" %len(ranges))
+            rospy.loginfo( "Missing laser scans: got %d points" %len(ranges))
 
         return ranges
 
@@ -253,55 +258,112 @@ class Botvac():
         else:
             self.stop_state = False
 
+        print("sendcmd: setmotor %s,%s,%s"%(str(int(l)), str(int(r)), str(int(s))))
         self.sendCmd("setmotor "+str(int(l))+" "+str(int(r))+" "+str(int(s)))
 
     def getMotors(self):
         """ Update values for motors in the self.state dictionary.
             Returns current left, right encoder values. """
 
+        #print("calling flush()")
+        self.flush()
         self.sendCmd("getmotors")
+        mVars=self.telnet_c.read_until("@#")
+        #print("getmotors: %s" % mVars)
 
+        vals=mVars.splitlines()
+        for i in vals:
+            if len(i) > 2:
+                values = i.split(",")
+                #print values
+                if values[0] in xv11_motor_info:
+                    self.state[values[0]] = int(values[1])
+
+        #print("getmotors return LeftWheel_PositionInMM:%d and RightWheel_PositionInMM:%d" % (self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]))
+        return [self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]]
+
+
+        '''
         if not self.readTo("Parameter"):
-            self.flush()
+            #self.flush()
             return [0,0]
-
         last=False
         while not last:
         #for i in range(len(xv11_motor_info)):
             try:
                 vals,last = self.getResponse()
-                #print vals,last
+                print vals,last
                 values = vals.split(",")
                 self.state[values[0]] = int(values[1])
             except Exception as ex:
                 rospy.logerr("Exception Reading Neato motors: " + str(ex))
 
         return [self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]]
+        '''
 
     def getAnalogSensors(self):
         """ Update values for analog sensors in the self.state dictionary. """
 
         self.sendCmd("getanalogsensors")
+        mVars=self.telnet_c.read_until("@#")
+        #print mVars
 
+        vals=mVars.splitlines()
+        #print vals
+        for i in vals:
+            if len(i) < 2:
+                continue
+            if "," not in i:
+                continue
+
+            values = i.split(",")
+            #print values
+
+            if values[0] in xv11_analog_sensors:
+                self.state[values[0]] = int(values[1])
+
+        #print("getAnalogSensors done")
+
+        '''
         if not self.readTo("SensorName"):
-            self.flush()
+            #self.flush()
             return
 
         last =False
         while not last: #for i in range(len(xv11_analog_sensors)):
             try:
                 vals,last = self.getResponse()
+                print vals,last
                 values = vals.split(",")
                 self.state[values[0]] = int(values[1])
             except Exception as ex:
                 rospy.logerr("Exception Reading Neato Analog sensors: " + str(ex))
+        '''
 
     def getDigitalSensors(self):
         """ Update values for digital sensors in the self.state dictionary. """
-
-
         self.sendCmd("getdigitalsensors")
+        mVars=self.telnet_c.read_until("@#")
+        #print mVars
 
+        vals=mVars.splitlines()
+
+        #print vals
+
+        for i in vals:
+            if len(i) > 2:
+                if "," not in i:
+                    continue
+                values = i.split(",")
+                #print values
+                if values[0] in xv11_digital_sensors:
+                    self.state[values[0]] = int(values[1])
+
+        #print("getDigitalSensors done. LSIDEBIT:%d, RSIDEBIT:%d, LFRONTBIT:%d, RFRONTBIT:%d" %
+        #      (self.state["LSIDEBIT"], self.state["RSIDEBIT"], self.state["LFRONTBIT"], self.state["RFRONTBIT"]))
+        return [self.state["LSIDEBIT"], self.state["RSIDEBIT"], self.state["LFRONTBIT"], self.state["RFRONTBIT"]]
+
+        '''
         if not self.readTo("Digital Sensor Name"):
              self.flush()
              return [0, 0, 0, 0]
@@ -310,22 +372,22 @@ class Botvac():
         while not last: #for i in range(len(xv11_digital_sensors)):
             try:
                 vals,last = self.getResponse()
-                #print vals
+                print vals
                 values = vals.split(",")
                 self.state[values[0]] = int(values[1])
                 #print "Got Sensor: %s=%s" %(values[0],values[1])
             except Exception as ex:
                 rospy.logerr("Exception Reading Neato Digital sensors: " + str(ex))
         return [self.state["LSIDEBIT"], self.state["RSIDEBIT"], self.state["LFRONTBIT"], self.state["RFRONTBIT"]]
+        '''
 
     def getButtons(self):
-	return [0,0,0,0,0]
+        return [0,0,0,0,0]
 
     def getCharger(self):
         """ Update values for charger/battery related info in self.state dictionary. """
-
         self.sendCmd("getcharger")
-
+        '''
         if not self.readTo("Label"):
             self.flush()
             return
@@ -340,24 +402,25 @@ class Botvac():
 
             except Exception as ex:
                 rospy.logerr("Exception Reading Neato charger info: " + str(ex))
+        '''
 
-    def setBacklight(self, value):
-        if value > 0:
-           self.sendCmd("setled backlighton")
-        else:
-           self.sendCmd("setled backlightoff")
+    #def setBacklight(self, value):
+    #    if value > 0:
+    #       self.sendCmd("setled backlighton")
+    #    else:
+    #       self.sendCmd("setled backlightoff")
 
     def setLed(self,cmd):
         self.sendCmd("setled %s" % cmd)
     
     def setLED(self,cmd):
-	self.setLed(cmd)
+        self.setLed(cmd)
 	
     def sendCmd(self,cmd):
         #rospy.loginfo("Sent command: %s"%cmd)
-        self.port.write("%s\n" % cmd)
+        self.telnet_c.write("%s\n" % cmd)
 
-    def readTo(self,tag,timeout=1):
+    def readTo(self,tag,timeout=3):
         try:
             line,last = self.getResponse(timeout)
         except:
@@ -366,19 +429,81 @@ class Botvac():
         if line=="":
             return False
 
+        print("readTo tag %s and line is %s" % (tag, line))
         while line.split(",")[0] != tag:
             try:
                 line,last = self.getResponse(timeout)
+                print("readTo while loop: tag %s and line is %s" % (tag, line))
+
                 if line=="":
                     return False
             except:
                 return False
 
+        print("readTo return true!  tag %s and line is %s" % (tag, line))
         return True
+
+
+    # thread to read data from the telnet port
+    # buffers each line in a list (self.comsData)
+    # when an end of response ("@#") is read, adds the complete list of response 
+    # lines to self.responseData and resets the comsData list for the next command response.
+    def read(self):
+        line=""
+
+        while(self.reading):
+            #self.reading = False
+            #time.sleep(1)
+            try:
+               #print("get one line:")
+
+               #val = self.telnet_c.expect(p) # read from telnet 1 char at a time so we can parse each character
+               #val = self.telnet_c.rawq_getchar(self)
+               line = self.telnet_c.read_until("\n")
+            except Exception as ex:
+                line=[]
+
+            if len(line) > 0:
+
+                if '\x1A' in line:
+                    print "line %s has ^Z" % (line)
+                    self.comsData.append(line) 
+                    line = "" 
+
+                    with self.readLock:
+                        self.responseData.append(list(self.comsData))
+                    self.comsData = []     # clear
+                elif "$" in line:
+
+                    print "line %s has $ sign" % (line)
+                    self.comsData.append(line) 
+                    line = "" 
+
+                    with self.readLock:
+                        self.responseData.append(list(self.comsData))
+                    self.comsData = []     # clear
+                elif "@#" in line:
+
+                    print "line %s has <@#> sign" % (line)
+                    self.comsData.append(line) 
+                    line = "" 
+
+                    with self.readLock:
+                        self.responseData.append(list(self.comsData))
+                    self.comsData = []     # clear
+                elif '\n' in line:
+                    print("got NL here and line %s, and len(line) is %d" % (line, len(line)))
+                    self.comsData.append(line)
+                    line = ""
+                else:
+                    print("no NL and ^Z, line %s" % (line))
+
 
     # thread to read data from the serial port
     # buffers each line in a list (self.comsData)
-    # when an end of response (^Z) is read, adds the complete list of response lines to self.responseData and resets the comsData list for the next command response.
+    # when an end of response (^Z) is read, adds the complete list of 
+    # response lines to self.responseData and resets the comsData list for the next command response.
+    '''
     def read(self):
         self.reading = True
         line=""
@@ -391,13 +516,6 @@ class Botvac():
                 val=[]
 
             if len(val) > 0:
-
-                '''
-                if ord(val[0]) < 32:
-                    print("'%s'"% hex(ord(val[0])))
-                else:
-                    print ("'%s'"%str(val))
-                '''
 
                 if ord(val[0]) ==13: # ignore the CRs
                     pass
@@ -421,6 +539,7 @@ class Botvac():
                         line = "" # clear the bufer for the next line
                 else:
                     line=line+val # add the character to the current line buffer
+    '''
 
     # read response data for a command
     # returns tuple (line,last)
@@ -437,7 +556,7 @@ class Botvac():
             with self.readLock: # pop a new response data list out of self.responseData (should contain all data lines returned for the last sent command)
                if len(self.responseData) > 0:
                   self.currentResponse = self.responseData.pop(0)
-                  #print "New Response Set"
+                  print "New Response Set"
                else:
                   self.currentResponse=[] # no data to get
 
@@ -452,24 +571,26 @@ class Botvac():
         # if currentResponse has data pop the next line 
         if not len(self.currentResponse)==0:
             line = self.currentResponse.pop(0)
-            #print line,len(self.currentResponse)
+            print line,len(self.currentResponse)
             if  len(self.currentResponse)==0:
                 last=True  # if this was the last line in the response set the last flag
         else:
-            print "Time Out" # no data so must have timedout
+            print "Rx Time Out" # no data so must have timedout
 
         #rospy.loginfo("Got Response: %s, Last: %d" %(line,last))
         return (line,last)
 
     def flush(self):
-	while(1):
+        #print ("flush...")
+        print self.telnet_c.read_eager()
+        print self.telnet_c.read_lazy()
+        '''
+	    while(1):
           l,last= self.getResponse(1)
-	  if l=="":
-		return	
+	    if l=="":
+		    return	
+        '''
 
-#SetLED - Sets the specified LED to on,off,blink, or dim. (TestMode Only)
-#BacklightOn - LCD Backlight On  (mutually exclusive of BacklightOff)
-#BacklightOff - LCD Backlight Off (mutually exclusive of BacklightOn)
 #ButtonAmber - Start Button Amber (mutually exclusive of other Button options)
 #ButtonGreen - Start Button Green (mutually exclusive of other Button options)
 #LEDRed - Start Red LED (mutually exclusive of other Button options)
@@ -477,216 +598,4 @@ class Botvac():
 #ButtonAmberDim - Start Button Amber Dim (mutually exclusive of other Button options)
 #ButtonGreenDim - Start Button Green Dim (mutually exclusive of other Button options)
 #ButtonOff - Start Button Off
-
-
-#########################################################################
-
-import telnetlib
-import os
-class Huey():
-
-    def __init__(self, telnet_ip="192.168.1.107"):
-        self.telnet_c = telnetlib.Telnet(telnet_ip)
-        print(">>> telnet to server at %s now..."%(telnet_ip))
-        rospy.loginfo("Huey: telnet to server %s now..." %(telnet_ip))
-
-        self.telnet_c.read_until("login:")
-        self.telnet_c.write("root\n")
-        self.telnet_c.read_until("Password:")
-        self.telnet_c.write("\n")
-        self.telnet_c.read_until("#");
-        rospy.loginfo("Huey: connected to telnet server")
-
-        # Storage for motor and sensor information
-        self.state = {"LeftWheel_PositionInMM": 0, "RightWheel_PositionInMM": 0, 
-                    "LSIDEBIT": 0, "RSIDEBIT": 0, "LFRONTBIT": 0, "RFRONTBIT": 0}
-        self.stop_state = True
-        # turn things on
-        self.comsData = []
-        self.responseData = []
-        self.currentResponse=[]
-
-        self.reading = False
-
-        self.readLock = threading.RLock()
-        #self.readThread = threading.Thread(None, self.read)
-        #self.readThread.start()
-
-        self.telnet_c.write("\n\n\n")
-
-        self.setTestMode("on")
-        self.setLDS("on")
-
-        time.sleep(0.5)
-        self.setLed("ledgreen")
-
-        self.base_width = BASE_WIDTH
-        self.max_speed = MAX_SPEED
-
-        rospy.loginfo("neato_driver Huey class init done!")
-
-    def exit(self):
-        self.setLDS("off")
-        self.setLed("buttonoff")
-
-        time.sleep(1)
-
-        self.setTestMode("off")
-
-        self.reading=False
-        self.readThread.join()
-
-        # close telnet?
-
-    def setTestMode(self, value):
-        """ Turn test mode on/off. """
-        self.telnet_c.write("testmode " + value + "\n")
-
-    def setLDS(self, value):
-        self.telnet_c.write("setldsrotation " + value + "\n")
-
-    def requestScan(self):
-        """ Ask neato for an array of scan reads. """
-        #self.telnet_c.flushInput()
-        self.telnet_c.write("getldsscan\n")
-
-    def getScanRanges(self):
-        """ Read values of a scan -- call requestScan first! """
-        ranges = list()
-        angle = 0
-        try:
-            line = self.telnet_c.read_until(b"/r/n#>")
-        except:
-            print("getScanRanges: read_until failed")
-            return []
-        while line.split(",")[0] != "AngleInDegrees":
-            try:
-                line = self.telnet_c.read_until(b"/r/n#>")
-            except:
-                return []
-        while angle < 360:
-            try:
-                vals = self.telnet_c.read_until(b"/r/n#>")
-            except:
-                pass
-            vals = vals.split(",")
-            #print angle, vals
-            try:
-                a = int(vals[0])
-                r = int(vals[1])
-                ranges.append(r/1000.0)
-            except:
-                ranges.append(0)
-            angle += 1
-        return ranges
-
-    def setMotors(self, l, r, s):
-        """ Set motors, distance left & right + speed """
-        #This is a work-around for a bug in the Neato API. The bug is that the
-        #robot won't stop instantly if a 0-velocity command is sent - the robot
-        #could continue moving for up to a second. To work around this bug, the
-        #first time a 0-velocity is sent in, a velocity of 1,1,1 is sent. Then, 
-        #the zero is sent. This effectively causes the robot to stop instantly.
-        if (int(l) == 0 and int(r) == 0 and int(s) == 0):
-            if (not self.stop_state):
-                self.stop_state = True
-                l = 1
-                r = 1
-                s = 1
-        else:
-            self.stop_state = False
-
-        self.telnet_c.write("setmotor "+str(int(l))+" "+str(int(r))+" "+str(int(s))+"\n")
-
-    def getMotors(self):
-        """ Update values for motors in the self.state dictionary.
-            Returns current left, right encoder values. """
-        #self.port.flushInput()
-        self.telnet_c.write("getmotors\n")
-        line = self.telnet_c.read_until(b"/r/n#>")
-        while line.split(",")[0] != "Parameter":
-            try:
-                line = self.telnet_c.read_until(b"/r/n#>")
-            except:
-                return [0,0]
-        for i in range(len(xv11_motor_info)):
-            try:
-                values = self.telnet_c.read_until(b"/r/n#>").split(",")
-                self.state[values[0]] = int(values[1])
-            except:
-                pass
-        return [self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]]
-
-    def getAnalogSensors(self):
-        """ Update values for analog sensors in the self.state dictionary. """
-        self.telnet_c.write("getanalogsensors\n")
-        line = self.telnet_c.read_until(b"/r/n#>")
-        while line.split(",")[0] != "SensorName":
-            try:
-                line = self.telnet_c.read_until(b"/r/n#>")
-            except:
-                return
-        for i in range(len(xv11_analog_sensors)):
-            try:
-                values = self.telnet_c.read_until(b"/r/n#>").split(",")
-                self.state[values[0]] = int(values[1])
-            except:
-                pass
-
-    def getDigitalSensors(self):
-        """ Update values for digital sensors in the self.state dictionary. """
-        self.telnet_c.write("getdigitalsensors\n")
-        line = self.telnet_c.read_until(b"/r/n#>")
-        while line.split(",")[0] != "Digital Sensor Name":
-            try:
-                line = self.telnet_c.read_until(b"/r/n#>")
-            except:
-                return
-        for i in range(len(xv11_digital_sensors)):
-            try:
-                values = self.telnet_c.read_until(b"/r/n#>").split(",")
-                self.state[values[0]] = int(values[1])
-            except:
-                pass
-
-    def getButtons():
-        return [0,0,0,0,0]
-
-    def getCharger(self):
-        """ Update values for charger/battery related info in self.state dictionary. """
-        self.telnet_c.write("getcharger\n")
-        line = self.telnet_c.read_until(b"/r/n#>")
-        while line.split(",")[0] != "Label":
-            line = self.telnet_c.read_until(b"/r/n#>")
-        for i in range(len(xv11_charger_info)):
-            values = self.telnet_c.read_until(b"/r/n#>").split(",")
-            try:
-                self.state[values[0]] = int(values[1])
-            except:
-                pass
-
-    def setBacklight(self, value):
-        if value > 0:
-            self.telnet_c.write("setled backlighton\n")
-        else:
-            self.telnet_c.write("setled backlightoff\n")
-
-    def setLed(self, cmd):
-        self.telnet_c.write("setled %s\n" % cmd)
-
-    def setLED(self, cmd):
-        self.setLed(cmd)
-
-    #SetLED - Sets the specified LED to on,off,blink, or dim. (TestMode Only)
-    #BacklightOn - LCD Backlight On  (mutually exclusive of BacklightOff)
-    #BacklightOff - LCD Backlight Off (mutually exclusive of BacklightOn)
-    #ButtonAmber - Start Button Amber (mutually exclusive of other Button options)
-    #ButtonGreen - Start Button Green (mutually exclusive of other Button options)
-    #LEDRed - Start Red LED (mutually exclusive of other Button options)
-    #LEDGreen - Start Green LED (mutually exclusive of other Button options)
-    #ButtonAmberDim - Start Button Amber Dim (mutually exclusive of other Button options)
-    #ButtonGreenDim - Start Button Green Dim (mutually exclusive of other Button options)
-    #ButtonOff - Start Button Off
-
-
 
