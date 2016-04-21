@@ -259,7 +259,7 @@ class Botvac():
             self.stop_state = False
 
         print("sendcmd: setmotor %s,%s,%s"%(str(int(l)), str(int(r)), str(int(s))))
-        self.sendCmd("setmotor "+str(int(l))+" "+str(int(r))+" "+str(int(s)))
+        self.sendCmd("setmotor LWheelDist "+str(int(l))+" RWheelDist "+str(int(r))+" speed "+str(int(s)))
 
     def getMotors(self):
         """ Update values for motors in the self.state dictionary.
@@ -582,8 +582,10 @@ class Botvac():
 
     def flush(self):
         #print ("flush...")
-        print self.telnet_c.read_eager()
-        print self.telnet_c.read_lazy()
+        #print self.telnet_c.read_eager()
+        #print self.telnet_c.read_lazy()
+        self.telnet_c.read_eager()
+        self.telnet_c.read_lazy()
         '''
 	    while(1):
           l,last= self.getResponse(1)

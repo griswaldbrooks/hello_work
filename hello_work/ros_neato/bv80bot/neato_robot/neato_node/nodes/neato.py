@@ -113,17 +113,17 @@ class NeatoNode:
             left, right = self.robot.getMotors()
             #rospy.loginfo("spin: loop: getMotors")
 
-            cmd_rate = cmd_rate-1
-            if cmd_rate ==0:
-		    # send updated movement commands
-		    #if self.cmd_vel != self.old_vel or self.cmd_vel == [0,0]:
+            #cmd_rate = cmd_rate-1
+            #if cmd_rate ==0:
+                # send updated movement commands
+		        #if self.cmd_vel != self.old_vel or self.cmd_vel == [0,0]:
                     # max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
-		    #self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], (abs(self.cmd_vel[0])+abs(self.cmd_vel[1]))/2)
-		    self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
-            #rospy.loginfo("spin: loop: setMotors")
-            cmd_rate = self.CMD_RATE
-
-            self.old_vel = self.cmd_vel
+                    #self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], (abs(self.cmd_vel[0])+abs(self.cmd_vel[1]))/2)
+            if self.cmd_vel != self.old_vel:
+                self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
+                rospy.loginfo("spin: loop: setMotors: %d, %d, %d" % (self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1]))))
+                cmd_rate = self.CMD_RATE
+                self.old_vel = self.cmd_vel
 
             # prepare laser scan
             scan.header.stamp = rospy.Time.now()
@@ -221,6 +221,7 @@ class NeatoNode:
         if k > self.robot.max_speed:
             x = x*self.robot.max_speed/k; th = th*self.robot.max_speed/k
 
+        print("cmdVelCb: got cmd_vel %d:%d" % (int(x-th), int(x+th)))
         self.cmd_vel = [int(x-th), int(x+th)]
 
 if __name__ == "__main__":    
