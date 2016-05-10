@@ -37,6 +37,7 @@ import rospy
 import time
 import threading
 import telnetlib
+import datetime
 
 BASE_WIDTH = 248    # millimeters
 MAX_SPEED = 300     # millimeters/second
@@ -118,7 +119,7 @@ xv11_charger_info = [ "FuelPercent",
 
 
 class Botvac():
-    def __init__(self, telnet_ip="192.168.1.108", telnet_port="8711"):
+    def __init__(self, telnet_ip="Huey-Tiger", telnet_port="8711"):
         self.telnet_c = telnetlib.Telnet(telnet_ip, telnet_port)
         print(">>> telnet to server at %s:%s now..."%(telnet_ip, telnet_port))
         rospy.loginfo("Huey: telneted to server %s:%s now..." %(telnet_ip, telnet_port))
@@ -189,6 +190,7 @@ class Botvac():
 
     def requestScan(self):
         """ Ask neato for an array of scan reads. """
+        self.flush()
         self.sendCmd("getldsscan")
 
     #def getScanRanges(self):
@@ -198,49 +200,67 @@ class Botvac():
         ranges = list()
         angle = 0
 
-        mVals = self.telnet_c.read_until("@#")
+        i = 0
 
-        '''
-        if not self.readTo("AngleInDegrees"):
-            self.flush()
-            return []
-        '''
+        while (i < 2):
+            mVals = self.telnet_c.read_until("@#")
 
-        vals = mVals.splitlines()
-        #print vals
-        #print "before LDS while loop here"
-        for l in vals: #angle < 360:
-            if len(l) < 2:
-                continue
+            vals = mVals.splitlines()
+            #print vals
+            #print "before LDS while loop here"
+            for l in vals: #angle < 360:
+                if len(l) < 2:
+                    continue
 
-            if "," not in l:
-                continue
+                if "," not in l:
+                    continue
 
-            vals = l.split(",")
+                # getldsscan result's 1st line is, 
+                #   AngleInDegrees,DistInMM,Intensity,ErrorCodeHEX
+                # last line is,
+                #   ROTATION_SPEED,5.09
+                # both shall be ignored here!
+                if "ErrorCodeHEX" in l:
+                    continue
+                if "SPEED" in l:
+                    continue
 
-            if (ord(vals[0][0])>=48 and ord(vals[0][0])<=57 ):
-                #print angle, vals
-                try:
-                    a = int(vals[0])
-                    r = int(vals[1])
-                    e = int(vals[3])
+                vals = l.split(",")
+                try: 
+                    if (ord(vals[0][0])>=48 and ord(vals[0][0])<=57 ):
+                        #print angle, vals
+                        try:
+                            a = int(vals[0])
+                            r = int(vals[1])
+                            e = int(vals[3])
 
-                    while (angle < a):
-                        ranges.append(0)
-                        angle +=1
+                            while (angle < a):
+                                ranges.append(0)
+                                angle +=1
 
-                    if(e==0):
-                        ranges.append(r/1000.0)
+                            if(e==0):
+                                ranges.append(r/1000.0)
+                            else:
+                                ranges.append(0)
+                        except:
+                            ranges.append(0)
+                        angle += 1
                     else:
-                        ranges.append(0)
-                except:
-                    ranges.append(0)
-                angle += 1
+                        t=datetime.time;
+                        print ">>>", t, "LDS reading: wrong value", vals
+                except: 
+                    t=datetime.time;
+                    print "!!!", t, "LDS reading exception: ", vals
 
-        if len(ranges) <> 360:
-            rospy.loginfo( "Missing laser scans: got %d points" %len(ranges))
+            if len(ranges) <> 360:
+                rospy.loginfo( "Missing laser scans: got %d points" %len(ranges))
+            #else:
+                #rospy.loginfo( "laser scans: got %d points" %len(ranges))
 
-        return ranges
+            if len(ranges) == 360:
+                return ranges
+
+            i += 1
 
     def setMotors(self, l, r, s):
         """ Set motors, distance left & right + speed """
@@ -279,27 +299,8 @@ class Botvac():
                 if values[0] in xv11_motor_info:
                     self.state[values[0]] = int(values[1])
 
-        #print("getmotors return LeftWheel_PositionInMM:%d and RightWheel_PositionInMM:%d" % (self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]))
+        print("getmotors return LeftWheel_PositionInMM:%d and RightWheel_PositionInMM:%d" % (self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]))
         return [self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]]
-
-
-        '''
-        if not self.readTo("Parameter"):
-            #self.flush()
-            return [0,0]
-        last=False
-        while not last:
-        #for i in range(len(xv11_motor_info)):
-            try:
-                vals,last = self.getResponse()
-                print vals,last
-                values = vals.split(",")
-                self.state[values[0]] = int(values[1])
-            except Exception as ex:
-                rospy.logerr("Exception Reading Neato motors: " + str(ex))
-
-        return [self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]]
-        '''
 
     def getAnalogSensors(self):
         """ Update values for analog sensors in the self.state dictionary. """
@@ -584,8 +585,8 @@ class Botvac():
         #print ("flush...")
         #print self.telnet_c.read_eager()
         #print self.telnet_c.read_lazy()
-        self.telnet_c.read_eager()
-        self.telnet_c.read_lazy()
+        #self.telnet_c.read_eager()
+        #self.telnet_c.read_lazy()
         '''
 	    while(1):
           l,last= self.getResponse(1)

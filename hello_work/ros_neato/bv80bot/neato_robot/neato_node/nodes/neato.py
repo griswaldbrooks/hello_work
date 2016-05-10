@@ -33,6 +33,7 @@ __author__ = "ferguson@cs.albany.edu (Michael Ferguson)"
 
 import roslib; roslib.load_manifest("neato_node")
 import rospy
+import time
 from math import sin,cos,pi
 
 from sensor_msgs.msg import LaserScan
@@ -52,9 +53,11 @@ class NeatoNode:
         rospy.init_node('neato')
 
         self.CMD_RATE =2 
+        self.newTwistCmd = 0
 
         #self.port = rospy.get_param('~port', "/dev/ttyUSB0")
-        self.telnet_ip = rospy.get_param('~telnet_ip', "192.168.1.107")
+        #self.telnet_ip = rospy.get_param('~telnet_ip', "192.168.1.107")
+        self.telnet_ip = rospy.get_param('~telnet_ip', "Huey-Tiger")
         #rospy.loginfo("Using port: %s" % self.port)
         rospy.loginfo("Using telnet: %s" % self.telnet_ip)
 
@@ -100,10 +103,10 @@ class NeatoNode:
         #self.robot.setLED("Green")
 
         # main loop of driver
-        r = rospy.Rate(20)
+        r = rospy.Rate(1)
         cmd_rate= self.CMD_RATE
 
-        rospy.loginfo(">>>spin: before while loop")
+        rospy.loginfo(">>> spin: before while loop <<<")
 
         while not rospy.is_shutdown():
             # notify if low batt
@@ -111,7 +114,7 @@ class NeatoNode:
             #    print "battery low " + str(self.robot.getCharger()) + "%"
             # get motor encoder values
             left, right = self.robot.getMotors()
-            #rospy.loginfo("spin: loop: getMotors")
+            rospy.loginfo("---spin: loop: self.newTwistCmd %d" % self.newTwistCmd)
 
             #cmd_rate = cmd_rate-1
             #if cmd_rate ==0:
@@ -119,11 +122,26 @@ class NeatoNode:
 		        #if self.cmd_vel != self.old_vel or self.cmd_vel == [0,0]:
                     # max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
                     #self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], (abs(self.cmd_vel[0])+abs(self.cmd_vel[1]))/2)
-            if self.cmd_vel != self.old_vel:
-                self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
-                rospy.loginfo("spin: loop: setMotors: %d, %d, %d" % (self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1]))))
+
+            #if self.cmd_vel != self.old_vel:
+            if self.newTwistCmd != 0:
+                #self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
+                self.robot.setMotors(self.cmd_vel[0], self.cmd_vel[1], 50)
+                '''
+                l_x = self.cmd_vel[0] * 100
+                if abs(l_x) > 1000:
+                    l_x = 100
+                l_y = self.cmd_vel[1] * 100
+                if abs(l_y) > 1000:
+                    l_y = 100
+                self.robot.setMotors(l_x, l_y, max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1])))
+                '''
+                # Steve: testing with longer sleep 
+                #time.sleep(1)
+                #rospy.loginfo("spin: loop: setMotors: %d[%d], %d[%d], %d" % (self.cmd_vel[0], l_x, self.cmd_vel[1], l_y, max(abs(self.cmd_vel[0]),abs(self.cmd_vel[1]))))
                 cmd_rate = self.CMD_RATE
                 self.old_vel = self.cmd_vel
+                self.newTwistCmd = 0
 
             # prepare laser scan
             scan.header.stamp = rospy.Time.now()
@@ -132,7 +150,8 @@ class NeatoNode:
             #rospy.loginfo("spin: loop: requestScan")
             #scan.ranges = self.robot.getScanRanges()
             scan.ranges = self.robot.getLdsScan()
-            #rospy.loginfo("spin: loop: getLdsScan")
+            #if len(scan.ranges) == 0:
+            #    scan.ranges = self.robot.getLdsScan()
 
             # now update position information
             dt = (scan.header.stamp - then).to_sec()
@@ -181,7 +200,9 @@ class NeatoNode:
             self.odomBroadcaster.sendTransform((self.x, self.y, 0), (quaternion.x, quaternion.y, quaternion.z,
                                                                      quaternion.w), then, "base_footprint", "odom")
             #rospy.loginfo("spin: loop: sendTransform")
-            self.scanPub.publish(scan)
+            if len(scan.ranges) > 0:
+                self.scanPub.publish(scan)
+
             self.odomPub.publish(odom)
             button_enum = ("Soft_Button", "Up_Button", "Start_Button", "Back_Button", "Down_Button")
             sensor_enum = ("Left_Side_Bumper", "Right_Side_Bumper", "Left_Bumper", "Right_Bumper")
@@ -199,6 +220,8 @@ class NeatoNode:
             # wait, then do it again
             #rospy.loginfo("spin: loop: before sleep()")
             r.sleep()
+            # Steve: testing with longer sleep 
+            time.sleep(1)
 
         # shut down
         self.robot.setBacklight(0)
@@ -213,6 +236,27 @@ class NeatoNode:
 		return-1
 
     def cmdVelCb(self,req):
+        '''
+        chaonao@Tiger-thinkpad:~$ rostopic echo /cmd_vel
+        linear: 
+          x: 0.0
+          y: 0.0
+          z: 0.0
+        angular: 
+          x: 0.0
+          y: 0.0
+          z: 0.387420489
+        ---
+        linear: 
+          x: 0.156905298045
+          y: 0.0
+          z: 0.0
+        angular: 
+          x: 0.0
+          y: 0.0
+          z: 0.0
+        '''
+
         x = req.linear.x * 1000
         th = req.angular.z * (self.robot.base_width/2)
         k = max(abs(x-th),abs(x+th))
@@ -221,6 +265,7 @@ class NeatoNode:
         if k > self.robot.max_speed:
             x = x*self.robot.max_speed/k; th = th*self.robot.max_speed/k
 
+        self.newTwistCmd = 1
         print("cmdVelCb: got cmd_vel %d:%d" % (int(x-th), int(x+th)))
         self.cmd_vel = [int(x-th), int(x+th)]
 
