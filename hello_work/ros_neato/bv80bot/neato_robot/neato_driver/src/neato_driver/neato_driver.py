@@ -602,3 +602,267 @@ class Botvac():
 #ButtonGreenDim - Start Button Green Dim (mutually exclusive of other Button options)
 #ButtonOff - Start Button Off
 
+
+#######################################################################################
+class Huey():
+    def __init__(self, telnet_ip="Huey-Tiger", telnet_port="8711"):
+        self.telnet_c = telnetlib.Telnet(telnet_ip, telnet_port)
+        rospy.loginfo("Huey: telneted to server %s:%s now..." %(telnet_ip, telnet_port))
+
+        # Storage for motor and sensor information
+        self.state = {"LeftWheel_PositionInMM": 0, "RightWheel_PositionInMM": 0,"LSIDEBIT":0,"RSIDEBIT":0,"LFRONTBIT":0,"RFRONTBIT":0}
+        self.stop_state = True
+        # turn things on
+        self.comsData = []
+        self.responseData= []
+        self.currentResponse=[]
+
+        #self.port.flushInput()
+        self.sendCmd("\n\n\n")
+        #self.port.flushInput()
+
+        #let's printout "getver" from Robot
+        self.sendCmd("getversion")
+        ver=self.telnet_c.read_until("@#", 5)
+        print ("Robot version is %s" % ver)
+
+
+        time.sleep(0.5)
+
+        self.base_width = BASE_WIDTH
+        self.max_speed = MAX_SPEED
+
+        #self.flush()
+        rospy.loginfo("Init Done")
+
+
+    def exit(self):
+        time.sleep(1)
+
+        self.flush()
+        rospy.loginfo(">>>>>>>>>>>>>>> Exiting <<<<<<<<<<<<<<")
+
+    def requestScan(self):
+        """ Ask neato for an array of scan reads. """
+        self.flush()
+        self.sendCmd("getldsscan")
+
+    def getLdsScan(self):
+
+        """ Read values of a scan -- call requestScan first! """
+        ranges = list()
+        angle = 0
+
+        i = 0
+
+        while (i < 2):
+            mVals = self.telnet_c.read_until("@#")
+
+            vals = mVals.splitlines()
+            #print vals
+            #print "before LDS while loop here"
+            for l in vals: #angle < 360:
+                if len(l) < 2:
+                    continue
+
+                if "," not in l:
+                    continue
+
+                # getldsscan result's 1st line is, 
+                #   AngleInDegrees,DistInMM,Intensity,ErrorCodeHEX
+                # last line is,
+                #   ROTATION_SPEED,5.09
+                # both shall be ignored here!
+                if "ErrorCodeHEX" in l:
+                    continue
+                if "SPEED" in l:
+                    continue
+
+                vals = l.split(",")
+                try: 
+                    if (ord(vals[0][0])>=48 and ord(vals[0][0])<=57 ):
+                        #print angle, vals
+                        try:
+                            a = int(vals[0])
+                            r = int(vals[1])
+                            e = int(vals[3])
+
+                            while (angle < a):
+                                ranges.append(0)
+                                angle +=1
+
+                            if(e==0):
+                                ranges.append(r/1000.0)
+                            else:
+                                ranges.append(0)
+                        except:
+                            ranges.append(0)
+                        angle += 1
+                    else:
+                        t=datetime.time;
+                        print ">>>", t, "LDS reading: wrong value", vals
+                except: 
+                    t=datetime.time;
+                    print "!!!", t, "LDS reading exception: ", vals
+
+            if len(ranges) <> 360:
+                rospy.loginfo( "Missing laser scans: got %d points" %len(ranges))
+            #else:
+                #rospy.loginfo( "laser scans: got %d points" %len(ranges))
+
+            if len(ranges) == 360:
+                return ranges
+
+            i += 1
+
+    def getMotors(self):
+        """ Update values for motors in the self.state dictionary.
+            Returns current left, right encoder values. """
+
+        #print("calling flush()")
+        self.flush()
+        self.sendCmd("getmotors")
+        mVars=self.telnet_c.read_until("@#")
+        #print("getmotors: %s" % mVars)
+
+        vals=mVars.splitlines()
+        for i in vals:
+            if len(i) > 2:
+                values = i.split(",")
+                #print values
+                if values[0] in xv11_motor_info:
+                    self.state[values[0]] = int(values[1])
+
+        print("getmotors return LeftWheel_PositionInMM:%d and RightWheel_PositionInMM:%d" % (self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]))
+        return [self.state["LeftWheel_PositionInMM"],self.state["RightWheel_PositionInMM"]]
+
+    def getAnalogSensors(self):
+        """ Update values for analog sensors in the self.state dictionary. """
+
+        self.sendCmd("getanalogsensors")
+        mVars=self.telnet_c.read_until("@#")
+        #print mVars
+
+        vals=mVars.splitlines()
+        #print vals
+        for i in vals:
+            if len(i) < 2:
+                continue
+            if "," not in i:
+                continue
+
+            values = i.split(",")
+            #print values
+
+            if values[0] in xv11_analog_sensors:
+                self.state[values[0]] = int(values[1])
+
+        #print("getAnalogSensors done")
+
+    def getDigitalSensors(self):
+        """ Update values for digital sensors in the self.state dictionary. """
+        self.sendCmd("getdigitalsensors")
+        mVars=self.telnet_c.read_until("@#")
+        #print mVars
+
+        vals=mVars.splitlines()
+
+        #print vals
+
+        for i in vals:
+            if len(i) > 2:
+                if "," not in i:
+                    continue
+                values = i.split(",")
+                #print values
+                if values[0] in xv11_digital_sensors:
+                    self.state[values[0]] = int(values[1])
+
+        #print("getDigitalSensors done. LSIDEBIT:%d, RSIDEBIT:%d, LFRONTBIT:%d, RFRONTBIT:%d" %
+        #      (self.state["LSIDEBIT"], self.state["RSIDEBIT"], self.state["LFRONTBIT"], self.state["RFRONTBIT"]))
+        return [self.state["LSIDEBIT"], self.state["RSIDEBIT"], self.state["LFRONTBIT"], self.state["RFRONTBIT"]]
+
+    def getButtons(self):
+        return [0,0,0,0,0]
+	
+    def sendCmd(self,cmd):
+        #rospy.loginfo("Sent command: %s"%cmd)
+        self.telnet_c.write("%s\n" % cmd)
+
+    def readTo(self,tag,timeout=3):
+        try:
+            line,last = self.getResponse(timeout)
+        except:
+            return False
+
+        if line=="":
+            return False
+
+        print("readTo tag %s and line is %s" % (tag, line))
+        while line.split(",")[0] != tag:
+            try:
+                line,last = self.getResponse(timeout)
+                print("readTo while loop: tag %s and line is %s" % (tag, line))
+
+                if line=="":
+                    return False
+            except:
+                return False
+
+        print("readTo return true!  tag %s and line is %s" % (tag, line))
+        return True
+
+
+    # read response data for a command
+    # returns tuple (line,last)
+    # line is one complete line of text from the command response
+    # last = true if the line was the last line of the response data (indicated by a ^Z from the neato)
+    # returns the next line of data from the buffer.
+    # if the line was the last line last = true
+    # if no data is avaialable and we timeout returns line=""
+    def getResponse(self,timeout=1):
+
+        # if we don't have any data in currentResponse, wait for more data to come in (or timeout) 
+        while (len(self.currentResponse)==0) and (not rospy.is_shutdown()) and timeout > 0:
+
+            with self.readLock: # pop a new response data list out of self.responseData (should contain all data lines returned for the last sent command)
+               if len(self.responseData) > 0:
+                  self.currentResponse = self.responseData.pop(0)
+                  print "New Response Set"
+               else:
+                  self.currentResponse=[] # no data to get
+
+            if len(self.currentResponse)==0: # nothing in the buffer so wait (or until timeout)
+               time.sleep(0.010)
+               timeout=timeout-0.010
+
+        # default to nothing to return
+        line = ""
+        last=False
+
+        # if currentResponse has data pop the next line 
+        if not len(self.currentResponse)==0:
+            line = self.currentResponse.pop(0)
+            print line,len(self.currentResponse)
+            if  len(self.currentResponse)==0:
+                last=True  # if this was the last line in the response set the last flag
+        else:
+            print "Rx Time Out" # no data so must have timedout
+
+        #rospy.loginfo("Got Response: %s, Last: %d" %(line,last))
+        return (line,last)
+
+    def flush(self):
+        #print ("flush...")
+        #print self.telnet_c.read_eager()
+        #print self.telnet_c.read_lazy()
+        #self.telnet_c.read_eager()
+        #self.telnet_c.read_lazy()
+        '''
+	    while(1):
+          l,last= self.getResponse(1)
+	    if l=="":
+		    return	
+        '''
+
+
