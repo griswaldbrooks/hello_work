@@ -1,0 +1,22 @@
+<launch>
+
+  <!-- create transform for laser (should be moved to the URDF) -->
+  <!-- node name="laser_to_base" pkg="tf2_ros" type="static_transform_publisher"  args="-0.090 0.0 0.037 0 0 0 1 base_link base_laser_link" launch-prefix="xterm -e python -m pdb" / -->
+  <node name="laser_to_base" pkg="tf2_ros" type="static_transform_publisher"  args="-0.090 0.0 0.037 0 0 0 1 base_link base_laser_link" />
+
+  <!-- launch the main base driver node -->
+ 
+  <!-- publish teh URDF -->
+  <param name="robot_description" command="$(find xacro)/xacro.py $(find neato_node)/urdf/neato.urdf.xacro" />
+  
+  <!-- publish the robot state transforms -->
+  <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" output="screen" >
+      <param name="use_gui" value="False"/>
+  </node>
+
+  <node pkg="gmapping" type="slam_gmapping" name="SLAM" args="scan:=/scan map:=/map" />
+
+  <node name="rviz" type="rviz" pkg="rviz" args="-d $(find bv80bot_node)/config/rviz.rviz" />
+
+</launch>
+
